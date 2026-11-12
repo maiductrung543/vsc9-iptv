@@ -3,14 +3,14 @@ module.exports = async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=30');
+    res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=15');
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
 
     const groupTitle = "VSC9 Live";
-    const fallbackM3U = `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", Đang cập nhật dữ liệu từ VSC9...\nhttp://invalid`;
+    const fallbackM3U = `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", Đang kết nối dữ liệu VSC9...\nhttp://invalid`;
 
     try {
         const TARGET_URL = "https://vsc9.vip";
@@ -23,9 +23,9 @@ module.exports = async function handler(req, res) {
             response = await fetch(TARGET_URL, {
                 signal: controller.signal,
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8',
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'vi-VN,vi;q=0.9',
                     'Referer': TARGET_URL
                 }
             });
@@ -60,7 +60,7 @@ module.exports = async function handler(req, res) {
                 .replace(/&gt;/g, '>');
         }
 
-        // 1. Quét từ dữ liệu Next.js JSON nếu có
+        // 1. Quét dữ liệu từ Next.js JSON (__NEXT_DATA__)
         const nextDataMatch = html.match(/<script[^>]*id=["']__NEXT_DATA__["'][^>]*>(.*?)<\/script>/s);
         if (nextDataMatch && nextDataMatch[1]) {
             try {
@@ -101,22 +101,32 @@ module.exports = async function handler(req, res) {
             } catch (e) {}
         }
 
-        // 2. Quét thẻ <a> HTML đa năng để lấy mọi trận đấu trên trang
+        // 2. Quét HTML trực tiếp dựa trên cấu trúc thẻ chứa link trận đấu
         const linkRegex = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gis;
         let match;
         while ((match = linkRegex.exec(html)) !== null) {
             let href = match[1];
-            let rawText = decodeHTMLEntities(match[2].replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+            let rawHtml = match[2];
+            let rawText = decodeHTMLEntities(rawHtml.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
             
-            // Lọc các thẻ chứa từ khóa trận đấu hoặc có dấu VS
-            if (rawText.includes("VS") || rawText.includes("vs") || href.includes("tran-dau") || href.includes("watch")) {
+            // Lọc các khối có chứa tên trận đấu hoặc link chi tiết trận
+            if (href.includes("/tran-dau/") || href.includes("/watch/") || rawText.includes(" - ") || rawText.includes("VS")) {
                 let cleanText = rawText.replace(/Trực tiếp|Trực Tiếp|Đang diễn ra|Sắp diễn ra/gi, "").trim();
-                let parts = cleanText.split(/VS|vs/i).map(p => p.trim());
                 
+                // Tìm tên BLV nếu có trong đoạn text (ví dụ: BLV Lưu Bang)
+                let blvFound = "";
+                let blvMatch = cleanText.match(/BLV\s+([A-Za-zÀ-ỹ0-9\s]+)/i);
+                if (blvMatch) {
+                    blvFound = blvMatch[1].trim();
+                    cleanText = cleanText.replace(blvMatch[0], "").trim();
+                }
+
+                let parts = cleanText.split(/VS|\-|vs/i).map(p => p.trim()).filter(p => p.length > 1);
                 if (parts.length >= 2) {
                     let t1 = parts[0].replace(/^[\d:\-\/\s]+/, '').trim();
                     let t2 = parts[1].replace(/[\d:\-\/\s]+$/, '').trim();
-                    if (t1.length > 1 && t2.length > 1) {
+                    
+                    if (t1 && t2 && t1.length < 30 && t2.length < 30) {
                         let key = `${t1} VS ${t2}`;
                         let fullUrl = href.startsWith('http') ? href : TARGET_URL + (href.startsWith('/') ? '' : '/') + href;
                         
@@ -124,9 +134,11 @@ module.exports = async function handler(req, res) {
                             matchDict[key] = {
                                 teams: key,
                                 time: "",
-                                blv: "",
+                                blv: blvFound,
                                 url: fullUrl
                             };
+                        } else if (blvFound && !matchDict[key].blv) {
+                            matchDict[key].blv = blvFound;
                         }
                     }
                 }
@@ -144,9 +156,9 @@ module.exports = async function handler(req, res) {
             results.push(`#EXTINF:-1 group-title="${groupTitle}" tvg-logo="${mainSiteLogo}", ${timeInfo}${item.teams}${blvInfo}\n${vlcOpt}\n${item.url}`);
         }
 
-        // Đảm bảo luôn trả về ít nhất 1 kênh hợp lệ để app IPTV không bị lỗi 0 kênh
+        // Fallback an toàn tuyệt đối: nếu quét sót thì trả về link trang chủ để app không bị lỗi 0 kênh
         const finalM3U = results.length === 0 
-            ? `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", VSC9 - Trang Chủ\n${vlcOpt}\n${TARGET_URL}` 
+            ? `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", VSC9 Tổng Hợp\n${vlcOpt}\n${TARGET_URL}` 
             : "#EXTM3U\n\n" + results.join("\n\n");
 
         return res.end(finalM3U);
