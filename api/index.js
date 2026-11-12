@@ -1,72 +1,51 @@
 module.exports = async function handler(req, res) {
-    // 1. Cấu hình CORS và Header
+    // 1. Cấu hình CORS và Header cho M3U
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=60');
+    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=30');
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
 
-    const groupTitle = "VSC9 TV";
-    const fallbackM3U = `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", Không tìm thấy trận đấu nào hoặc trang đích phản hồi chậm.\nhttp://invalid`;
+    const groupTitle = "VSC9 Live";
+    const fallbackM3U = `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", Đang kết nối tới VSC9...\nhttp://invalid`;
 
     try {
         const TARGET_URL = "https://vsc9.vip";
         
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
 
         let response;
         try {
             response = await fetch(TARGET_URL, {
                 signal: controller.signal,
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                    'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Referer': 'https://vsc9.vip/',
-                    'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-                    'Sec-Ch-Ua-Mobile': '?0',
-                    'Sec-Ch-Ua-Platform': '"Windows"',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'same-origin',
-                    'Sec-Fetch-User': '?1',
-                    'Upgrade-Insecure-Request': '1'
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'vi-VN,vi;q=0.9',
+                    'Referer': TARGET_URL
                 }
             });
-        } catch (fetchError) {
+        } catch (err) {
             clearTimeout(timeoutId);
             return res.end(fallbackM3U);
         }
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-            return res.end(`#EXTM3U\n`);
+            return res.end(`#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", Lỗi phản hồi từ trang chủ.\nhttp://invalid`);
         }
 
         const html = await response.text();
-
-        const KNOWN_LEAGUES = [
-            "SAFF CHAMPIONSHIP", "SAFF CUP", "SAFF",
-            "FRIENDLIES", "CLUB FRIENDLIES", "FRIENDLY",
-            "PREMIER LEAGUE", "NGOẠI HẠNG ANH", "LA LIGA", "SERIE A", 
-            "BUNDESLIGA", "LIGUE 1", "CHAMPIONS LEAGUE", "CÚP C1", 
-            "EUROPA LEAGUE", "V-LEAGUE 1", "V-LEAGUE", "WORLD CUP", "EURO"
-        ];
-
-        const teamAliasMap = {
-            "mân đàn": "Manchester Utd",
-            "man đỏ": "Manchester Utd"
-        };
+        const matchDict = {};
 
         let mainSiteLogo = "https://cdn-icons-png.flaticon.com/512/8112/8112602.png";
         const logoMatch = html.match(/<img[^>]+src=["']([^"']*logo[^"']*)["'][^>]*>/i);
-        if (logoMatch && logoMatch[1] && !logoMatch[1].includes('svg')) {
+        if (logoMatch && logoMatch[1]) {
             let src = logoMatch[1];
             mainSiteLogo = src.startsWith('http') ? src : TARGET_URL + (src.startsWith('/') ? '' : '/') + src;
         }
@@ -75,208 +54,98 @@ module.exports = async function handler(req, res) {
             if (!text) return "";
             return text
                 .replace(/&#(\d+);/g, (m, dec) => String.fromCharCode(dec))
-                .replace(/&#x([0-9a-f]+);/gi, (m, hex) => String.fromCharCode(parseInt(hex, 16)))
                 .replace(/&quot;/g, '"')
-                .replace(/&apos;/g, "'")
                 .replace(/&#39;/g, "'")
                 .replace(/&amp;/g, '&')
                 .replace(/&lt;/g, '<')
                 .replace(/&gt;/g, '>');
         }
 
-        function ultraClean(str) {
-            if (!str) return "";
-            let cleaned = decodeHTMLEntities(str);
-            return cleaned
-                .replace(/^\s*\d+;\s*/g, '')
-                .replace(/^[a-z]+;\s*/gi, '')
-                .replace(/[\u{1F300}-\u{1F5FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}]/gu, ' ')
-                .replace(/^[^a-zA-Z0-9À-ỹ]+/g, '')
-                .replace(/[^a-zA-Z0-9À-ỹ]+$/g, '')
-                .replace(/\s+/g, ' ')
-                .trim();
-        }
-
-        function extractCleanTeam(teamStr) {
-            if (!teamStr) return "";
-            let clean = decodeHTMLEntities(teamStr);
-            clean = clean.replace(/([a-z])([A-Z])/g, '$1 $2');
-
-            let modified;
-            do {
-                modified = clean;
-                const sortedLeagues = KNOWN_LEAGUES.slice().sort((x, y) => y.length - x.length);
-                for (let lg of sortedLeagues) {
-                    let escapeLg = lg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                    let regexLg = new RegExp(`^\\s*${escapeLg}\\s*`, "gi");
-                    if (regexLg.test(clean)) {
-                        clean = clean.replace(regexLg, '');
-                        break;
-                    }
-                }
-            } while (clean !== modified);
-
-            clean = clean.replace(/^(cup|saff|friendlies|de|pa|copa|fc|sc)\s+/gi, '');
-            clean = ultraClean(clean);
-
-            const lowerClean = clean.toLowerCase();
-            for (let alias in teamAliasMap) {
-                if (lowerClean === alias || lowerClean.includes(alias)) {
-                    clean = teamAliasMap[alias];
-                    break;
-                }
-            }
-
-            clean = clean.replace(/^[W|M]\s+/i, '');
-            clean = clean.replace(/^\d{1,2}[:\-]?\d{0,2}\s*/g, '');
-            clean = clean.replace(/\bBLV\b/gi, '');
-            clean = clean.replace(/^AD\s+/i, '');
-
-            return ultraClean(clean);
-        }
-
-        const matchDict = {};
-
-        function addMatchToDict(href, team1Raw, team2Raw, timeVal, dateVal, blvNameRaw, directStreamUrl) {
-            let team1 = extractCleanTeam(team1Raw);
-            let team2 = extractCleanTeam(team2Raw);
-            
-            if (!team1 || !team2) return;
-            if (team1.toLowerCase().includes("vsc9") || team2.toLowerCase().includes("vsc9") ||
-                team1.toLowerCase().includes("rights reserved") || team2.toLowerCase().includes("rights reserved")) {
-                return;
-            }
-
-            let timeDisplay = timeVal || "";
-            let dateDisplay = dateVal ? dateVal.replace('-', '/') : "";
-            let timeDateDisplay = "";
-
-            if (timeDisplay && dateDisplay) timeDateDisplay = `${timeDisplay} - ${dateDisplay}`;
-            else if (timeDisplay) timeDateDisplay = timeDisplay;
-            else if (dateDisplay) timeDateDisplay = dateDisplay;
-
-            let cleanBlv = "";
-            if (blvNameRaw) {
-                cleanBlv = blvNameRaw.replace(/BLV\s*/gi, '').trim();
-            }
-
-            const formattedTeams = `${team1} VS ${team2}`;
-            const dictKey = `${team1} VS ${team2} - ${timeDateDisplay}`;
-            
-            // Ưu tiên link stream tự động lấy được, nếu không có thì lấy link trang đích (fallbackUrl)
-            const fullUrl = directStreamUrl || (href ? (href.startsWith('http') ? href : (href.startsWith('/') ? TARGET_URL + href : TARGET_URL + '/' + href)) : TARGET_URL);
-
-            if (!matchDict[dictKey]) {
-                matchDict[dictKey] = { 
-                    timeDate: timeDateDisplay, 
-                    teams: formattedTeams,
-                    blv: cleanBlv, 
-                    streamUrl: fullUrl 
-                };
-            } else if (directStreamUrl && !matchDict[dictKey].streamUrl.includes('.m3u8')) {
-                matchDict[dictKey].streamUrl = directStreamUrl;
-            }
-        }
-
-        // 1. Tự động trích xuất thông tin và link stream từ Next.js Data (JSON gốc của trang)
+        // Bot tự động quét dữ liệu Next.js JSON ngầm của trang
         const nextDataMatch = html.match(/<script[^>]*id=["']__NEXT_DATA__["'][^>]*>(.*?)<\/script>/s);
         if (nextDataMatch && nextDataMatch[1]) {
             try {
                 const nextData = JSON.parse(nextDataMatch[1]);
-                function findMatchesRecursive(obj) {
+                function scanJson(obj) {
                     if (!obj || typeof obj !== 'object') return;
-                    if (obj.home_name && obj.away_name) {
-                        let blvInput = obj.commentator_name || obj.blv || obj.commentator || "";
-                        if (Array.isArray(blvInput)) {
-                            blvInput = blvInput.map(c => typeof c === 'string' ? c : (c.name || '')).join(" + ");
-                        }
+                    
+                    // Nhận diện cấu trúc trận đấu có tên đội nhà và đội khách
+                    let t1 = obj.home_name || obj.homeTeam || obj.team1 || "";
+                    let t2 = obj.away_name || obj.awayTeam || obj.team2 || "";
+                    
+                    if (t1 && t2) {
+                        let timeStr = obj.match_time || obj.time || "";
+                        let dateStr = obj.match_date || obj.date || "";
+                        let timeDate = timeStr && dateStr ? `${timeStr} - ${dateStr}` : (timeStr || dateStr);
                         
-                        // Tự động quét các trường có khả năng chứa link stream (.m3u8 hoặc link phát)
-                        let autoStream = obj.stream_url || obj.play_url || obj.m3u8 || obj.link_m3u8 || obj.url || obj.stream || "";
-                        if (!autoStream && obj.channels && Array.isArray(obj.channels) && obj.channels.length > 0) {
-                            autoStream = obj.channels[0].stream_url || obj.channels[0].url || "";
-                        }
+                        let stream = obj.stream_url || obj.play_url || obj.m3u8 || "";
+                        if (!stream && obj.slug) stream = `${TARGET_URL}/tran-dau/${obj.slug}`;
+                        else if (!stream && obj.id) stream = `${TARGET_URL}/tran-dau/${obj.id}`;
+                        else if (!stream) stream = TARGET_URL;
 
-                        addMatchToDict(
-                            obj.slug ? `/tran-dau/${obj.slug}` : (obj.id ? `/tran-dau/${obj.id}` : '/'), 
-                            obj.home_name, 
-                            obj.away_name, 
-                            obj.match_time || obj.time, 
-                            obj.match_date || obj.date, 
-                            blvInput,
-                            autoStream
-                        );
-                    }
-                    for (let key in obj) {
-                        if (obj.hasOwnProperty(key)) {
-                            findMatchesRecursive(obj[key]);
+                        let blv = obj.commentator_name || obj.blv || "";
+                        let key = `${t1} VS ${t2} - ${timeDate}`;
+                        
+                        if (!matchDict[key]) {
+                            matchDict[key] = {
+                                teams: `${t1} VS ${t2}`,
+                                time: timeDate,
+                                blv: blv,
+                                url: stream
+                            };
                         }
+                    }
+                    for (let k in obj) {
+                        if (obj.hasOwnProperty(k)) scanJson(obj[k]);
                     }
                 }
                 if (nextData?.props?.pageProps) {
-                    findMatchesRecursive(nextData.props.pageProps);
+                    scanJson(nextData.props.pageProps);
                 }
             } catch (e) {}
         }
 
-        // 2. Quét thẻ <a> HTML (Fallback nếu không dùng Next.js)
-        const blockRegex = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gis;
+        // Bot quét dự phòng qua thẻ HTML nếu JSON không đủ
+        const linkRegex = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gis;
         let match;
-        while ((match = blockRegex.exec(html)) !== null) {
-            const href = match[1];
-            let rawTagHtml = match[0]; // Lấy toàn bộ thẻ a để check xem có chứa link m3u8 ẩn bên trong không
+        while ((match = linkRegex.exec(html)) !== null) {
+            let href = match[1];
             let rawText = decodeHTMLEntities(match[2].replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
-
-            let timeMatch = rawText.match(/\b([0-1]?[0-9]|2[0-3]):([0-5][0-9])\b/);
-            let dateMatch = rawText.match(/\b(\d{1,2})[/-\s](\d{1,2})\b/);
-            let timeStr = timeMatch ? timeMatch[0] : "";
-            let dateStr = dateMatch ? `${dateMatch[1]}/${dateMatch[2]}` : "";
-
-            let text = rawText;
-            if (timeStr) text = text.replace(timeStr, ' ');
-            if (dateMatch) text = text.replace(dateMatch[0], ' ');
-
-            text = text.replace(/\b\d{1,2}\s*[:\-]\s*\d{1,2}\b/g, ' VS ');
-            text = text.replace(/\s+-\s+/g, ' VS ').replace(/\bvs\b/gi, ' VS ');
-            text = text.replace(/\b\d{1,3}(\+\d+)?'/g, ' ');
-            text = text.replace(/Trực tiếp|Trực Tiếp|Đang đá|Đang live|\bLIVE\b|Sắp diễn ra/ig, ' ');
-
-            if (!text.includes("VS")) continue;
-
-            // Tìm xem trong thẻ có attribute nào chứa link m3u8 không
-            let directStream = "";
-            let m3u8Match = rawTagHtml.match(/https?:\/\/[^\s"'<>]+?\.m3u8[^\s"'<>]*?/i);
-            if (m3u8Match) {
-                directStream = m3u8Match[0];
-            }
-
-            // Tự động tách tên BLV nếu có chữ BLV trong đoạn text
-            let foundBlv = "";
-            let blvMatch = text.match(/BLV\s+([A-Za-zÀ-ỹ0-9\s]+)/i);
-            if (blvMatch) {
-                foundBlv = blvMatch[1].trim();
-                text = text.replace(blvMatch[0], ' ');
-            }
-
-            let parts = text.split('VS').map(p => ultraClean(p)).filter(p => p.length > 0);
-            if (parts.length >= 2) {
-                addMatchToDict(href, parts[0], parts[1], timeStr, dateStr, foundBlv, directStream);
+            
+            if (rawText.includes("VS") || rawText.includes("vs")) {
+                let parts = rawText.split(/VS|vs/i).map(p => p.trim());
+                if (parts.length >= 2) {
+                    let t1 = parts[0].replace(/^[\d:\-\/\s]+/, '').trim();
+                    let t2 = parts[1].replace(/[\d:\-\/\s]+$/, '').trim();
+                    if (t1.length > 1 && t2.length > 1) {
+                        let key = `${t1} VS ${t2}`;
+                        let fullUrl = href.startsWith('http') ? href : TARGET_URL + (href.startsWith('/') ? '' : '/') + href;
+                        if (!matchDict[key]) {
+                            matchDict[key] = {
+                                teams: key,
+                                time: "",
+                                blv: "",
+                                url: fullUrl
+                            };
+                        }
+                    }
+                }
             }
         }
 
         const results = [];
         const vlcOpt = "#EXTVLCOPT:http-user-agent=Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
 
-        for (let key in matchDict) {
-            const data = matchDict[key];
-            const timeStr = data.timeDate ? `[${data.timeDate}] ` : "";
-            const blvInfo = data.blv ? ` (BLV ${data.blv})` : "";
-
-            results.push(`#EXTINF:-1 group-title="${groupTitle}" tvg-logo="${mainSiteLogo}", ${timeStr}${data.teams}${blvInfo}\n${vlcOpt}\n${data.streamUrl}`);
+        for (let k in matchDict) {
+            let item = matchDict[k];
+            let timeInfo = item.time ? `[${item.time}] ` : "";
+            let blvInfo = item.blv ? ` (BLV ${item.blv})` : "";
+            
+            results.push(`#EXTINF:-1 group-title="${groupTitle}" tvg-logo="${mainSiteLogo}", ${timeInfo}${item.teams}${blvInfo}\n${vlcOpt}\n${item.url}`);
         }
 
         const finalM3U = results.length === 0 
-            ? `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", Không tìm thấy trận đấu nào.\nhttp://invalid` 
+            ? `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", Không tìm thấy trận đấu trực tiếp nào lúc này.\nhttp://invalid` 
             : "#EXTM3U\n\n" + results.join("\n\n");
 
         return res.end(finalM3U);
