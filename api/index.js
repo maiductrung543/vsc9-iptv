@@ -1,5 +1,4 @@
 module.exports = async function handler(req, res) {
-    // 1. Cấu hình CORS và Header cho M3U
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -11,7 +10,7 @@ module.exports = async function handler(req, res) {
     }
 
     const groupTitle = "VSC9 Live";
-    const fallbackM3U = `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", Đang kết nối tới VSC9...\nhttp://invalid`;
+    const fallbackM3U = `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", Đang cập nhật dữ liệu từ VSC9...\nhttp://invalid`;
 
     try {
         const TARGET_URL = "https://vsc9.vip";
@@ -24,9 +23,9 @@ module.exports = async function handler(req, res) {
             response = await fetch(TARGET_URL, {
                 signal: controller.signal,
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'vi-VN,vi;q=0.9',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8',
                     'Referer': TARGET_URL
                 }
             });
@@ -37,7 +36,7 @@ module.exports = async function handler(req, res) {
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-            return res.end(`#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", Lỗi phản hồi từ trang chủ.\nhttp://invalid`);
+            return res.end(fallbackM3U);
         }
 
         const html = await response.text();
@@ -61,18 +60,15 @@ module.exports = async function handler(req, res) {
                 .replace(/&gt;/g, '>');
         }
 
-        // Bot tự động quét dữ liệu Next.js JSON ngầm của trang
+        // 1. Quét từ dữ liệu Next.js JSON nếu có
         const nextDataMatch = html.match(/<script[^>]*id=["']__NEXT_DATA__["'][^>]*>(.*?)<\/script>/s);
         if (nextDataMatch && nextDataMatch[1]) {
             try {
                 const nextData = JSON.parse(nextDataMatch[1]);
                 function scanJson(obj) {
                     if (!obj || typeof obj !== 'object') return;
-                    
-                    // Nhận diện cấu trúc trận đấu có tên đội nhà và đội khách
                     let t1 = obj.home_name || obj.homeTeam || obj.team1 || "";
                     let t2 = obj.away_name || obj.awayTeam || obj.team2 || "";
-                    
                     if (t1 && t2) {
                         let timeStr = obj.match_time || obj.time || "";
                         let dateStr = obj.match_date || obj.date || "";
@@ -84,7 +80,7 @@ module.exports = async function handler(req, res) {
                         else if (!stream) stream = TARGET_URL;
 
                         let blv = obj.commentator_name || obj.blv || "";
-                        let key = `${t1} VS ${t2} - ${timeDate}`;
+                        let key = `${t1} VS ${t2}`;
                         
                         if (!matchDict[key]) {
                             matchDict[key] = {
@@ -105,21 +101,25 @@ module.exports = async function handler(req, res) {
             } catch (e) {}
         }
 
-        // Bot quét dự phòng qua thẻ HTML nếu JSON không đủ
+        // 2. Quét thẻ <a> HTML đa năng để lấy mọi trận đấu trên trang
         const linkRegex = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gis;
         let match;
         while ((match = linkRegex.exec(html)) !== null) {
             let href = match[1];
             let rawText = decodeHTMLEntities(match[2].replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
             
-            if (rawText.includes("VS") || rawText.includes("vs")) {
-                let parts = rawText.split(/VS|vs/i).map(p => p.trim());
+            // Lọc các thẻ chứa từ khóa trận đấu hoặc có dấu VS
+            if (rawText.includes("VS") || rawText.includes("vs") || href.includes("tran-dau") || href.includes("watch")) {
+                let cleanText = rawText.replace(/Trực tiếp|Trực Tiếp|Đang diễn ra|Sắp diễn ra/gi, "").trim();
+                let parts = cleanText.split(/VS|vs/i).map(p => p.trim());
+                
                 if (parts.length >= 2) {
                     let t1 = parts[0].replace(/^[\d:\-\/\s]+/, '').trim();
                     let t2 = parts[1].replace(/[\d:\-\/\s]+$/, '').trim();
                     if (t1.length > 1 && t2.length > 1) {
                         let key = `${t1} VS ${t2}`;
                         let fullUrl = href.startsWith('http') ? href : TARGET_URL + (href.startsWith('/') ? '' : '/') + href;
+                        
                         if (!matchDict[key]) {
                             matchDict[key] = {
                                 teams: key,
@@ -144,8 +144,9 @@ module.exports = async function handler(req, res) {
             results.push(`#EXTINF:-1 group-title="${groupTitle}" tvg-logo="${mainSiteLogo}", ${timeInfo}${item.teams}${blvInfo}\n${vlcOpt}\n${item.url}`);
         }
 
+        // Đảm bảo luôn trả về ít nhất 1 kênh hợp lệ để app IPTV không bị lỗi 0 kênh
         const finalM3U = results.length === 0 
-            ? `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", Không tìm thấy trận đấu trực tiếp nào lúc này.\nhttp://invalid` 
+            ? `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", VSC9 - Trang Chủ\n${vlcOpt}\n${TARGET_URL}` 
             : "#EXTM3U\n\n" + results.join("\n\n");
 
         return res.end(finalM3U);
