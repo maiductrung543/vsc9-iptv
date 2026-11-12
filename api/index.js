@@ -1,169 +1,132 @@
+let customMatches = [
+    {
+        title: "Ghana vs Somalia (BLV Lưu Bang)",
+        url: "https://vsc9.vip"
+    }
+];
+
 module.exports = async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=15');
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
 
-    const groupTitle = "VSC9 Live";
-    const fallbackM3U = `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", Đang kết nối dữ liệu VSC9...\nhttp://invalid`;
+    const urlParams = new URL(req.url, `https://${req.headers.host}`);
+    const action = urlParams.searchParams.get('action');
 
-    try {
-        const TARGET_URL = "https://vsc9.vip";
-        
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-        let response;
-        try {
-            response = await fetch(TARGET_URL, {
-                signal: controller.signal,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'vi-VN,vi;q=0.9',
-                    'Referer': TARGET_URL
-                }
-            });
-        } catch (err) {
-            clearTimeout(timeoutId);
-            return res.end(fallbackM3U);
-        }
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-            return res.end(fallbackM3U);
-        }
-
-        const html = await response.text();
-        const matchDict = {};
-
-        let mainSiteLogo = "https://cdn-icons-png.flaticon.com/512/8112/8112602.png";
-        const logoMatch = html.match(/<img[^>]+src=["']([^"']*logo[^"']*)["'][^>]*>/i);
-        if (logoMatch && logoMatch[1]) {
-            let src = logoMatch[1];
-            mainSiteLogo = src.startsWith('http') ? src : TARGET_URL + (src.startsWith('/') ? '' : '/') + src;
-        }
-
-        function decodeHTMLEntities(text) {
-            if (!text) return "";
-            return text
-                .replace(/&#(\d+);/g, (m, dec) => String.fromCharCode(dec))
-                .replace(/&quot;/g, '"')
-                .replace(/&#39;/g, "'")
-                .replace(/&amp;/g, '&')
-                .replace(/&lt;/g, '<')
-                .replace(/&gt;/g, '>');
-        }
-
-        // 1. Quét dữ liệu từ Next.js JSON (__NEXT_DATA__)
-        const nextDataMatch = html.match(/<script[^>]*id=["']__NEXT_DATA__["'][^>]*>(.*?)<\/script>/s);
-        if (nextDataMatch && nextDataMatch[1]) {
+    // Nếu gửi dữ liệu cập nhật từ web quản lý
+    if (req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
             try {
-                const nextData = JSON.parse(nextDataMatch[1]);
-                function scanJson(obj) {
-                    if (!obj || typeof obj !== 'object') return;
-                    let t1 = obj.home_name || obj.homeTeam || obj.team1 || "";
-                    let t2 = obj.away_name || obj.awayTeam || obj.team2 || "";
-                    if (t1 && t2) {
-                        let timeStr = obj.match_time || obj.time || "";
-                        let dateStr = obj.match_date || obj.date || "";
-                        let timeDate = timeStr && dateStr ? `${timeStr} - ${dateStr}` : (timeStr || dateStr);
-                        
-                        let stream = obj.stream_url || obj.play_url || obj.m3u8 || "";
-                        if (!stream && obj.slug) stream = `${TARGET_URL}/tran-dau/${obj.slug}`;
-                        else if (!stream && obj.id) stream = `${TARGET_URL}/tran-dau/${obj.id}`;
-                        else if (!stream) stream = TARGET_URL;
-
-                        let blv = obj.commentator_name || obj.blv || "";
-                        let key = `${t1} VS ${t2}`;
-                        
-                        if (!matchDict[key]) {
-                            matchDict[key] = {
-                                teams: `${t1} VS ${t2}`,
-                                time: timeDate,
-                                blv: blv,
-                                url: stream
-                            };
-                        }
-                    }
-                    for (let k in obj) {
-                        if (obj.hasOwnProperty(k)) scanJson(obj[k]);
-                    }
+                const data = JSON.parse(body);
+                if (data && Array.isArray(data.matches)) {
+                    customMatches = data.matches;
                 }
-                if (nextData?.props?.pageProps) {
-                    scanJson(nextData.props.pageProps);
-                }
-            } catch (e) {}
-        }
-
-        // 2. Quét HTML trực tiếp dựa trên cấu trúc thẻ chứa link trận đấu
-        const linkRegex = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gis;
-        let match;
-        while ((match = linkRegex.exec(html)) !== null) {
-            let href = match[1];
-            let rawHtml = match[2];
-            let rawText = decodeHTMLEntities(rawHtml.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
-            
-            // Lọc các khối có chứa tên trận đấu hoặc link chi tiết trận
-            if (href.includes("/tran-dau/") || href.includes("/watch/") || rawText.includes(" - ") || rawText.includes("VS")) {
-                let cleanText = rawText.replace(/Trực tiếp|Trực Tiếp|Đang diễn ra|Sắp diễn ra/gi, "").trim();
-                
-                // Tìm tên BLV nếu có trong đoạn text (ví dụ: BLV Lưu Bang)
-                let blvFound = "";
-                let blvMatch = cleanText.match(/BLV\s+([A-Za-zÀ-ỹ0-9\s]+)/i);
-                if (blvMatch) {
-                    blvFound = blvMatch[1].trim();
-                    cleanText = cleanText.replace(blvMatch[0], "").trim();
-                }
-
-                let parts = cleanText.split(/VS|\-|vs/i).map(p => p.trim()).filter(p => p.length > 1);
-                if (parts.length >= 2) {
-                    let t1 = parts[0].replace(/^[\d:\-\/\s]+/, '').trim();
-                    let t2 = parts[1].replace(/[\d:\-\/\s]+$/, '').trim();
-                    
-                    if (t1 && t2 && t1.length < 30 && t2.length < 30) {
-                        let key = `${t1} VS ${t2}`;
-                        let fullUrl = href.startsWith('http') ? href : TARGET_URL + (href.startsWith('/') ? '' : '/') + href;
-                        
-                        if (!matchDict[key]) {
-                            matchDict[key] = {
-                                teams: key,
-                                time: "",
-                                blv: blvFound,
-                                url: fullUrl
-                            };
-                        } else if (blvFound && !matchDict[key].blv) {
-                            matchDict[key].blv = blvFound;
-                        }
-                    }
-                }
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ success: true }));
+            } catch (e) {
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ success: false, error: "Invalid JSON" }));
             }
-        }
-
-        const results = [];
-        const vlcOpt = "#EXTVLCOPT:http-user-agent=Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
-
-        for (let k in matchDict) {
-            let item = matchDict[k];
-            let timeInfo = item.time ? `[${item.time}] ` : "";
-            let blvInfo = item.blv ? ` (BLV ${item.blv})` : "";
-            
-            results.push(`#EXTINF:-1 group-title="${groupTitle}" tvg-logo="${mainSiteLogo}", ${timeInfo}${item.teams}${blvInfo}\n${vlcOpt}\n${item.url}`);
-        }
-
-        // Fallback an toàn tuyệt đối: nếu quét sót thì trả về link trang chủ để app không bị lỗi 0 kênh
-        const finalM3U = results.length === 0 
-            ? `#EXTM3U\n\n#EXTINF:-1 group-title="${groupTitle}", VSC9 Tổng Hợp\n${vlcOpt}\n${TARGET_URL}` 
-            : "#EXTM3U\n\n" + results.join("\n\n");
-
-        return res.end(finalM3U);
-
-    } catch (error) {
-        return res.end(fallbackM3U);
+        });
+        return;
     }
+
+    // Nếu không có chữ /api hoặc truy cập thẳng web quản lý
+    if (action === 'admin' || (!req.url.includes('/api') && req.url === '/')) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.end(`
+            <!DOCTYPE html>
+            <html lang="vi">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Quản Lý Bot IPTV</title>
+                <style>
+                    body { font-family: Arial, sans-serif; background: #121212; color: #fff; padding: 15px; margin: 0; }
+                    h2 { color: #00ffcc; text-align: center; }
+                    .match-card { background: #1e1e1e; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #333; }
+                    input { width: 100%; padding: 10px; margin: 5px 0 10px 0; background: #2c2c2c; border: 1px solid #444; color: #fff; border-radius: 4px; box-sizing: border-box; }
+                    button { background: #00ffcc; color: #000; border: none; padding: 10px 15px; font-weight: bold; border-radius: 4px; cursor: pointer; width: 100%; margin-top: 5px; }
+                    button.del { background: #ff4444; color: #fff; margin-top: 10px; }
+                    button.save { background: #4CAF50; color: #fff; font-size: 16px; margin-top: 15px; }
+                    .link-box { background: #222; padding: 10px; border-radius: 5px; word-break: break-all; margin-bottom: 15px; font-size: 14px; border: 1px dashed #00ffcc; }
+                </style>
+            </head>
+            <body>
+                <h2>🤖 Trạm Điều Hành Bot IPTV</h2>
+                <div class="link-box"><b>Link M3U cho App IPTV:</b><br><span id="m3u-link"></span></div>
+                <div id="matches-container"></div>
+                <button onclick="addMatch()">➕ Thêm Trận Mới</button>
+                <button class="save" onclick="saveMatches()">💾 Lưu Lại Thay Đổi</button>
+
+                <script>
+                    let matches = ${JSON.stringify(customMatches)};
+                    document.getElementById('m3u-link').innerText = window.location.origin + window.location.pathname.replace(/\\/api$/, '') + '/api';
+
+                    function render() {
+                        let container = document.getElementById('matches-container');
+                        container.innerHTML = '';
+                        matches.forEach((m, index) => {
+                            container.innerHTML += \`
+                                <div class="match-card">
+                                    <label>Tên Kênh / Trận Đấu:</label>
+                                    <input type="text" value="\${m.title}" id="title-\${index}">
+                                    <label>Đường Dẫn Stream (Link M3U8 / Web):</label>
+                                    <input type="text" value="\${m.url}" id="url-\${index}">
+                                    <button class="del" onclick="removeMatch(\${index})">🗑️ Xóa Kênh Này</button>
+                                </div>
+                            \`;
+                        });
+                    }
+
+                    function addMatch() {
+                        matches.push({ title: "Tên trận mới", url: "https://" });
+                        render();
+                    }
+
+                    function removeMatch(index) {
+                        matches.splice(index, 1);
+                        render();
+                    }
+
+                    function saveMatches() {
+                        matches = matches.map((m, index) => ({
+                            title: document.getElementById('title-' + index).value,
+                            url: document.getElementById('url-' + index).value
+                        }));
+
+                        fetch(window.location.href, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ matches: matches })
+                        }).then(res => res.json()).then(data => {
+                            if(data.success) alert('Đã lưu cấu hình thành công! App IPTV có thể load ngay.');
+                            else alert('Lỗi khi lưu!');
+                        });
+                    }
+                    render();
+                </script>
+            </body>
+            </html>
+        `);
+    }
+
+    // Xuất định dạng M3U chuẩn cho app IPTV khi gọi vào đuôi /api
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    const groupTitle = "Bot Tự Tạo";
+    const vlcOpt = "#EXTVLCOPT:http-user-agent=Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36";
+    
+    let results = [];
+    customMatches.forEach(m => {
+        results.push(`#EXTINF:-1 group-title="${groupTitle}", ${m.title}\n${vlcOpt}\n${m.url}`);
+    });
+
+    const finalM3U = "#EXTM3U\n\n" + results.join("\n\n");
+    return res.end(finalM3U);
 };
