@@ -1,27 +1,13 @@
 let customMatches = [
     {
-        title: "Kênh Dự Phòng / Test",
+        title: "HP-Media - Trực Tiếp 1",
+        url: "https://www.dailymotion.com/video/x9xxxx" // Bạn có thể thay bằng link video thực tế trên kênh
+    },
+    {
+        title: "Kênh Dự Phòng VSC9",
         url: "https://vsc9.vip"
     }
 ];
-
-// Hàm gọi API Dailymotion để lấy danh sách video của kênh HP-Media
-async function getDailymotionVideos() {
-    try {
-        const response = await fetch('https://api.dailymotion.com/user/HP-Media/videos?limit=20');
-        const data = await response.json();
-        
-        if (data && data.list && Array.isArray(data.list) && data.list.length > 0) {
-            return data.list.map(video => ({
-                title: video.title ? video.title.replace(/[\r\n]+/g, ' ') : "Video Dailymotion",
-                url: video.url || `https://www.dailymotion.com/video/${video.id}`
-            }));
-        }
-    } catch (e) {
-        console.error("Lỗi khi kết nối Dailymotion API:", e);
-    }
-    return [];
-}
 
 module.exports = async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -55,7 +41,7 @@ module.exports = async function handler(req, res) {
         return;
     }
 
-    // Hiển thị trang Quản lý Admin
+    // Hiển thị giao diện trang Quản lý Admin
     if (action === 'admin' || (!req.url.includes('/api') && req.url === '/')) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.end(`
@@ -135,17 +121,12 @@ module.exports = async function handler(req, res) {
         `);
     }
 
-    // Lấy dữ liệu từ Dailymotion
-    const dmVideos = await getDailymotionVideos();
-    
-    // Gộp dữ liệu. Nếu Dailymotion trống, vẫn còn customMatches để app không bị lỗi 0 kênh
-    const allMatches = [...dmVideos, ...customMatches];
-
+    // Xuất nội dung M3U chuẩn cho app IPTV
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     const groupTitle = "HP-Media Dailymotion";
     
     let results = [];
-    allMatches.forEach(m => {
+    customMatches.forEach(m => {
         results.push(`#EXTINF:-1 group-title="${groupTitle}", ${m.title}\n${m.url}`);
     });
 
