@@ -1,11 +1,8 @@
+// Danh sách kênh cố định hoặc tự động cập nhật
 let customMatches = [
     {
-        title: "HP-Media - Trực Tiếp 1",
-        url: "https://www.dailymotion.com/video/x9xxxx" // Bạn có thể thay bằng link video thực tế trên kênh
-    },
-    {
-        title: "Kênh Dự Phòng VSC9",
-        url: "https://vsc9.vip"
+        title: "HP-Media - Video Mẫu",
+        url: "https://www.dailymotion.com/video/x9xxxx"
     }
 ];
 
@@ -17,9 +14,6 @@ module.exports = async function handler(req, res) {
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
-
-    const urlParams = new URL(req.url, `https://${req.headers.host}`);
-    const action = urlParams.searchParams.get('action');
 
     // Xử lý lưu cấu hình từ trang Admin (POST)
     if (req.method === 'POST') {
@@ -41,8 +35,12 @@ module.exports = async function handler(req, res) {
         return;
     }
 
-    // Hiển thị giao diện trang Quản lý Admin
-    if (action === 'admin' || (!req.url.includes('/api') && req.url === '/')) {
+    // Kiểm tra xem người dùng đang truy cập giao diện quản trị hay đang lấy file M3U
+    const path = req.url || '';
+    const isApiRequest = path.includes('/api') || path.includes('m3u');
+
+    // Nếu truy cập trang chủ (không có /api) thì hiện giao diện quản lý Admin
+    if (!isApiRequest && !path.includes('action=admin')) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.end(`
             <!DOCTYPE html>
@@ -64,14 +62,15 @@ module.exports = async function handler(req, res) {
             </head>
             <body>
                 <h2>🤖 Quản Lý IPTV - HP-Media</h2>
-                <div class="link-box"><b>Link M3U (Dán vào app IPTV):</b><br><span id="m3u-link"></span></div>
+                <div class="link-box"><b>Link M3U (Dán dòng này vào app IPTV):</b><br><span id="m3u-link"></span></div>
                 <div id="matches-container"></div>
                 <button onclick="addMatch()">➕ Thêm Kênh Mới</button>
                 <button class="save" onclick="saveMatches()">💾 Lưu Lại Thay Đổi</button>
 
                 <script>
                     let matches = ${JSON.stringify(customMatches)};
-                    document.getElementById('m3u-link').innerText = window.location.origin + window.location.pathname.replace(/\\/api$/, '') + '/api';
+                    const baseApiUrl = window.location.origin + (window.location.pathname.endsWith('/') ? window.location.pathname : window.location.pathname + '/') + 'api';
+                    document.getElementById('m3u-link').innerText = baseApiUrl;
 
                     function render() {
                         let container = document.getElementById('matches-container');
@@ -121,15 +120,15 @@ module.exports = async function handler(req, res) {
         `);
     }
 
-    // Xuất nội dung M3U chuẩn cho app IPTV
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    const groupTitle = "HP-Media Dailymotion";
+    // --- PHẦN XUẤT FILE M3U CHUẨN CHO APP IPTV ---
+    res.setHeader('Content-Type', 'audio/x-mpegurl; charset=utf-8');
     
-    let results = [];
+    let m3uLines = ['#EXTM3U'];
+    
     customMatches.forEach(m => {
-        results.push(`#EXTINF:-1 group-title="${groupTitle}", ${m.title}\n${m.url}`);
+        m3uLines.push(`#EXTINF:-1 group-title="HP-Media", ${m.title}`);
+        m3uLines.push(m.url);
     });
 
-    const finalM3U = "#EXTM3U\n" + results.join("\n");
-    return res.end(finalM3U);
+    return res.end(m3uLines.join('\n'));
 };
