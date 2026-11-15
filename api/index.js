@@ -5,6 +5,25 @@ let customMatches = [
     }
 ];
 
+// Hàm gọi API Dailymotion để lấy danh sách video của kênh HP-Media
+async function getDailymotionVideos() {
+    try {
+        const response = await fetch('https://api.dailymotion.com/user/HP-Media/videos?limit=20');
+        const data = await response.json();
+        
+        if (data && data.list && Array.isArray(data.list)) {
+            return data.list.map(video => ({
+                title: video.title || "Video Dailymotion",
+                // Link xem trực tiếp video trên Dailymotion
+                url: video.url || `https://www.dailymotion.com/video/${video.id}`
+            }));
+        }
+    } catch (e) {
+        console.error("Lỗi khi kết nối Dailymotion API:", e);
+    }
+    return [];
+}
+
 module.exports = async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -17,7 +36,7 @@ module.exports = async function handler(req, res) {
     const urlParams = new URL(req.url, `https://${req.headers.host}`);
     const action = urlParams.searchParams.get('action');
 
-    // Nếu gửi dữ liệu cập nhật từ web quản lý
+    // Nếu gửi dữ liệu cập nhật từ web quản lý (POST)
     if (req.method === 'POST') {
         let body = '';
         req.on('data', chunk => { body += chunk; });
@@ -37,7 +56,7 @@ module.exports = async function handler(req, res) {
         return;
     }
 
-    // Nếu không có chữ /api hoặc truy cập thẳng web quản lý
+    // Nếu truy cập giao diện trang quản lý Admin
     if (action === 'admin' || (!req.url.includes('/api') && req.url === '/')) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.end(`
@@ -46,7 +65,7 @@ module.exports = async function handler(req, res) {
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Quản Lý Bot IPTV</title>
+                <title>Quản Lý Bot IPTV - HP-Media</title>
                 <style>
                     body { font-family: Arial, sans-serif; background: #121212; color: #fff; padding: 15px; margin: 0; }
                     h2 { color: #00ffcc; text-align: center; }
@@ -56,13 +75,15 @@ module.exports = async function handler(req, res) {
                     button.del { background: #ff4444; color: #fff; margin-top: 10px; }
                     button.save { background: #4CAF50; color: #fff; font-size: 16px; margin-top: 15px; }
                     .link-box { background: #222; padding: 10px; border-radius: 5px; word-break: break-all; margin-bottom: 15px; font-size: 14px; border: 1px dashed #00ffcc; }
+                    .info { color: #aaa; font-size: 13px; text-align: center; margin-bottom: 15px; }
                 </style>
             </head>
             <body>
-                <h2>🤖 Trạm Điều Hành Bot IPTV</h2>
+                <h2>🤖 Trạm Điều Hành Bot IPTV (HP-Media)</h2>
+                <div class="info">Hệ thống tự động đồng bộ video từ kênh Dailymotion kết hợp danh sách tùy chỉnh bên dưới.</div>
                 <div class="link-box"><b>Link M3U cho App IPTV:</b><br><span id="m3u-link"></span></div>
                 <div id="matches-container"></div>
-                <button onclick="addMatch()">➕ Thêm Trận Mới</button>
+                <button onclick="addMatch()">➕ Thêm Kênh/Trận Mới</button>
                 <button class="save" onclick="saveMatches()">💾 Lưu Lại Thay Đổi</button>
 
                 <script>
@@ -77,7 +98,7 @@ module.exports = async function handler(req, res) {
                                 <div class="match-card">
                                     <label>Tên Kênh / Trận Đấu:</label>
                                     <input type="text" value="\${m.title}" id="title-\${index}">
-                                    <label>Đường Dẫn Stream (Link M3U8 / Web):</label>
+                                    <label>Đường Dẫn Stream (Link / Web):</label>
                                     <input type="text" value="\${m.url}" id="url-\${index}">
                                     <button class="del" onclick="removeMatch(\${index})">🗑️ Xóa Kênh Này</button>
                                 </div>
@@ -86,7 +107,7 @@ module.exports = async function handler(req, res) {
                     }
 
                     function addMatch() {
-                        matches.push({ title: "Tên trận mới", url: "https://" });
+                        matches.push({ title: "Tên mới", url: "https://" });
                         render();
                     }
 
@@ -117,13 +138,18 @@ module.exports = async function handler(req, res) {
         `);
     }
 
-    // Xuất định dạng M3U chuẩn cho app IPTV khi gọi vào đuôi /api
+    // Lấy dữ liệu tự động từ Dailymotion kết hợp với customMatches khi gọi vào đuôi /api
+    const dmVideos = await getDailymotionVideos();
+    
+    // Gộp danh sách từ Dailymotion và danh sách custom của bạn (ưu tiên Dailymotion lên đầu hoặc gộp chung)
+    const allMatches = [...dmVideos, ...customMatches];
+
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    const groupTitle = "Bot Tự Tạo";
+    const groupTitle = "HP-Media Dailymotion";
     const vlcOpt = "#EXTVLCOPT:http-user-agent=Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36";
     
     let results = [];
-    customMatches.forEach(m => {
+    allMatches.forEach(m => {
         results.push(`#EXTINF:-1 group-title="${groupTitle}", ${m.title}\n${vlcOpt}\n${m.url}`);
     });
 
