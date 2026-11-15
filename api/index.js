@@ -1,6 +1,6 @@
 let customMatches = [
     {
-        title: "Ghana vs Somalia (BLV Lưu Bang)",
+        title: "Kênh Dự Phòng / Test",
         url: "https://vsc9.vip"
     }
 ];
@@ -11,10 +11,9 @@ async function getDailymotionVideos() {
         const response = await fetch('https://api.dailymotion.com/user/HP-Media/videos?limit=20');
         const data = await response.json();
         
-        if (data && data.list && Array.isArray(data.list)) {
+        if (data && data.list && Array.isArray(data.list) && data.list.length > 0) {
             return data.list.map(video => ({
-                title: video.title || "Video Dailymotion",
-                // Link xem trực tiếp video trên Dailymotion
+                title: video.title ? video.title.replace(/[\r\n]+/g, ' ') : "Video Dailymotion",
                 url: video.url || `https://www.dailymotion.com/video/${video.id}`
             }));
         }
@@ -36,7 +35,7 @@ module.exports = async function handler(req, res) {
     const urlParams = new URL(req.url, `https://${req.headers.host}`);
     const action = urlParams.searchParams.get('action');
 
-    // Nếu gửi dữ liệu cập nhật từ web quản lý (POST)
+    // Xử lý lưu cấu hình từ trang Admin (POST)
     if (req.method === 'POST') {
         let body = '';
         req.on('data', chunk => { body += chunk; });
@@ -56,7 +55,7 @@ module.exports = async function handler(req, res) {
         return;
     }
 
-    // Nếu truy cập giao diện trang quản lý Admin
+    // Hiển thị trang Quản lý Admin
     if (action === 'admin' || (!req.url.includes('/api') && req.url === '/')) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.end(`
@@ -75,15 +74,13 @@ module.exports = async function handler(req, res) {
                     button.del { background: #ff4444; color: #fff; margin-top: 10px; }
                     button.save { background: #4CAF50; color: #fff; font-size: 16px; margin-top: 15px; }
                     .link-box { background: #222; padding: 10px; border-radius: 5px; word-break: break-all; margin-bottom: 15px; font-size: 14px; border: 1px dashed #00ffcc; }
-                    .info { color: #aaa; font-size: 13px; text-align: center; margin-bottom: 15px; }
                 </style>
             </head>
             <body>
-                <h2>🤖 Trạm Điều Hành Bot IPTV (HP-Media)</h2>
-                <div class="info">Hệ thống tự động đồng bộ video từ kênh Dailymotion kết hợp danh sách tùy chỉnh bên dưới.</div>
-                <div class="link-box"><b>Link M3U cho App IPTV:</b><br><span id="m3u-link"></span></div>
+                <h2>🤖 Quản Lý IPTV - HP-Media</h2>
+                <div class="link-box"><b>Link M3U (Dán vào app IPTV):</b><br><span id="m3u-link"></span></div>
                 <div id="matches-container"></div>
-                <button onclick="addMatch()">➕ Thêm Kênh/Trận Mới</button>
+                <button onclick="addMatch()">➕ Thêm Kênh Mới</button>
                 <button class="save" onclick="saveMatches()">💾 Lưu Lại Thay Đổi</button>
 
                 <script>
@@ -96,18 +93,18 @@ module.exports = async function handler(req, res) {
                         matches.forEach((m, index) => {
                             container.innerHTML += \`
                                 <div class="match-card">
-                                    <label>Tên Kênh / Trận Đấu:</label>
+                                    <label>Tên Kênh:</label>
                                     <input type="text" value="\${m.title}" id="title-\${index}">
-                                    <label>Đường Dẫn Stream (Link / Web):</label>
+                                    <label>Đường Dẫn URL:</label>
                                     <input type="text" value="\${m.url}" id="url-\${index}">
-                                    <button class="del" onclick="removeMatch(\${index})">🗑️ Xóa Kênh Này</button>
+                                    <button class="del" onclick="removeMatch(\${index})">🗑️ Xóa</button>
                                 </div>
                             \`;
                         });
                     }
 
                     function addMatch() {
-                        matches.push({ title: "Tên mới", url: "https://" });
+                        matches.push({ title: "Kênh mới", url: "https://" });
                         render();
                     }
 
@@ -127,7 +124,7 @@ module.exports = async function handler(req, res) {
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ matches: matches })
                         }).then(res => res.json()).then(data => {
-                            if(data.success) alert('Đã lưu cấu hình thành công! App IPTV có thể load ngay.');
+                            if(data.success) alert('Đã lưu thành công!');
                             else alert('Lỗi khi lưu!');
                         });
                     }
@@ -138,21 +135,20 @@ module.exports = async function handler(req, res) {
         `);
     }
 
-    // Lấy dữ liệu tự động từ Dailymotion kết hợp với customMatches khi gọi vào đuôi /api
+    // Lấy dữ liệu từ Dailymotion
     const dmVideos = await getDailymotionVideos();
     
-    // Gộp danh sách từ Dailymotion và danh sách custom của bạn (ưu tiên Dailymotion lên đầu hoặc gộp chung)
+    // Gộp dữ liệu. Nếu Dailymotion trống, vẫn còn customMatches để app không bị lỗi 0 kênh
     const allMatches = [...dmVideos, ...customMatches];
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     const groupTitle = "HP-Media Dailymotion";
-    const vlcOpt = "#EXTVLCOPT:http-user-agent=Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36";
     
     let results = [];
     allMatches.forEach(m => {
-        results.push(`#EXTINF:-1 group-title="${groupTitle}", ${m.title}\n${vlcOpt}\n${m.url}`);
+        results.push(`#EXTINF:-1 group-title="${groupTitle}", ${m.title}\n${m.url}`);
     });
 
-    const finalM3U = "#EXTM3U\n\n" + results.join("\n\n");
+    const finalM3U = "#EXTM3U\n" + results.join("\n");
     return res.end(finalM3U);
 };
